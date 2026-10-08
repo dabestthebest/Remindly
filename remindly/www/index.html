@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Remindly</title>
+<style>
+  :root { --bg:#f6f7fb; --card:#fff; --text:#1c1e26; --muted:#7a7f8e; --accent:#4f46e5; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#14151b; --card:#1f2129; --text:#eceef5; --muted:#8b90a0; --accent:#818cf8; } }
+  * { box-sizing:border-box; }
+  body { margin:0; padding:max(16px, env(safe-area-inset-top)) 16px 24px; background:var(--bg); color:var(--text); font-family:system-ui,sans-serif; }
+  h1 { font-size:24px; margin:8px 0 16px; }
+  .card { background:var(--card); border-radius:14px; padding:14px; margin-bottom:10px; }
+  input, select, button { width:100%; font-size:16px; padding:12px; margin-bottom:8px; border-radius:10px; border:1px solid var(--muted); background:var(--bg); color:var(--text); }
+  button { background:var(--accent); color:#fff; border:none; font-weight:600; margin:0; }
+  .row { display:flex; justify-content:space-between; align-items:center; gap:10px; }
+  .row small { color:var(--muted); display:block; margin-top:2px; }
+  .del { width:auto; background:transparent; color:var(--muted); padding:6px 10px; font-size:20px; }
+  .done { opacity:.45; }
+</style>
+</head>
+<body>
+<h1>⏰ Remindly</h1>
+<div class="card">
+  <input id="title" placeholder="What should I remind you about?">
+  <input id="when" type="datetime-local">
+  <select id="repeat">
+    <option value="">Once</option>
+    <option value="day">Every day</option>
+    <option value="week">Every week</option>
+  </select>
+  <button id="add">Add reminder</button>
+</div>
+<div id="list"></div>
+
+<script>
+const LN = window.Capacitor && Capacitor.Plugins.LocalNotifications;
+let items = [];
+try { items = JSON.parse(localStorage.getItem('reminders') || '[]'); } catch (e) {}
+const save = () => { try { localStorage.setItem('reminders', JSON.stringify(items)); } catch (e) {} };
+const $ = id => document.getElementById(id);
+
+async function init() {
+  try {
+    await LN.requestPermissions();
+    const s = await LN.checkExactNotificationSetting();
+    if (s.exact_alarm === 'denied') await LN.changeExactNotificationSetting();
+    await LN.createChannel({ id: 'reminders', name: 'Reminders', importance: 4, vibration: true });
+  } catch (e) {}
+  render();
+}
+
+async function addReminder() {
+  const text = $('title').value.trim(), w = $('when').value, rep = $('repeat').value;
+  if (!text || !w) return alert('Add a title and a time.');
+  const at = new Date(w);
+  if (at <= new Date()) return alert('Pick a time in the future.');
+  const id = Math.floor(Date.now() / 1000) % 2000000000;
+  try {
+    await LN.schedule({ notifications: [{
+      id, title: 'Reminder', body: text, channelId: 'reminders',
+      schedule: Object.assign({ at, allowWhileIdle: true }, rep ? { every: rep } : {})
+    }]});
+  } catch (e) { return alert('Could not schedule: ' + e.message); }
+  items.push({ id, text, at: at.getTime(), rep });
+  save(); $('title').value = ''; render();
+}
+
+async function remove(id) {
+  try { await LN.cancel({ notifications: [{ id }] }); } catch (e) {}
+  items = items.filter(i => i.id !== id);
+  save(); render();
+}
+
+function render() {
+  const now = Date.now();
+  $('list').innerHTML = items.sort((a, b) => a.at - b.at).map(i => `
+    <div class="card row ${!i.rep && i.at < now ? 'done' : ''}">
+      <div>${i.text.replace(/</g, '&lt;')}
+        <small>${new Date(i.at).toLocaleString()}${i.rep ? ' · every ' + i.rep : ''}</small></div>
+      <button class="del" onclick="remove(${i.id})">✕</button>
+    </div>`).join('') || '<p style="color:var(--muted);text-align:center">No reminders yet.</p>';
+}
+
+$('add').onclick = addReminder;
+init();
+</script>
+</body>
+</html>
